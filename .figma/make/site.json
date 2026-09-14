@@ -1,0 +1,10 @@
+{
+  "description": "Streamline code auditing and build processes for developers, ensuring quality and efficiency in software projects while minimizing errors.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
