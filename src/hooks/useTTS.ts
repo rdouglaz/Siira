@@ -25,14 +25,18 @@ export interface UseTTSReturn {
 }
 
 export function useTTS(options: UseTTSOptions): UseTTSReturn {
-  const { language, autoPlay = false, onStateChange, onError } = options;
-  
+  const { language, onStateChange, onError } = options;
+
   const [state, setState] = useState<TTSState>({ status: "idle" });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isMountedRef = useRef(true);
-  const playedRef = useRef<string | null>(null);
 
-  // Cleanup audio on unmount
+  // Stable refs so speak/stop/pause/resume don't change identity when callbacks change.
+  const onStateChangeRef = useRef(onStateChange);
+  const onErrorRef = useRef(onError);
+  onStateChangeRef.current = onStateChange;
+  onErrorRef.current = onError;
+
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
@@ -51,7 +55,6 @@ export function useTTS(options: UseTTSOptions): UseTTSReturn {
 
       setState((prev) => ({ ...prev, status: "loading", error: undefined }));
 
-      // Stop any currently playing audio
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = "";
@@ -67,9 +70,7 @@ export function useTTS(options: UseTTSOptions): UseTTSReturn {
         if (!audioBlob) {
           const response = await fetch(TTS_ENDPOINT, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               text: text.trim(),
               language: activeLanguage,
@@ -88,49 +89,52 @@ export function useTTS(options: UseTTSOptions): UseTTSReturn {
         }
 
         const audioUrl = URL.createObjectURL(audioBlob);
-
         audioRef.current = new Audio(audioUrl);
-        
-        const handleEnded = () => {
+
+        audioRef.current.onended = () => {
           URL.revokeObjectURL(audioUrl);
           if (isMountedRef.current) {
-            setState({ status: "idle" });
+            const next: TTSState = { status: "idle" };
+            setState(next);
+            onStateChangeRef.current?.(next);
           }
         };
 
-        const handleError = () => {
+        audioRef.current.onerror = () => {
           URL.revokeObjectURL(audioUrl);
           if (isMountedRef.current) {
-            const error = new Error("Audio playback failed");
-            setState({ status: "error", error });
-            onError?.(error);
+            const err = new Error("Audio playback failed");
+            const next: TTSState = { status: "error", error: err };
+            setState(next);
+            onStateChangeRef.current?.(next);
+            onErrorRef.current?.(err);
           }
         };
 
-        const handlePause = () => {
+        audioRef.current.onpause = () => {
           if (isMountedRef.current) {
-            setState({ status: "paused" });
+            const next: TTSState = { status: "paused" };
+            setState(next);
+            onStateChangeRef.current?.(next);
           }
         };
 
-        audioRef.current.onended = handleEnded;
-        audioRef.current.onerror = handleError;
-        audioRef.current.onpause = handlePause;
-
-        setState({ status: "playing" });
-        onStateChange?.({ status: "playing" });
+        const next: TTSState = { status: "playing" };
+        setState(next);
+        onStateChangeRef.current?.(next);
 
         await audioRef.current.play();
-
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         if (isMountedRef.current) {
-          setState({ status: "error", error: err });
-          onError?.(err);
+          const next: TTSState = { status: "error", error: err };
+          setState(next);
+          onStateChangeRef.current?.(next);
+          onErrorRef.current?.(err);
         }
       }
     },
-    [language, onStateChange, onError]
+    [language] // stable — callbacks go through refs
   );
 
   const stop = useCallback(() => {
@@ -141,25 +145,28 @@ export function useTTS(options: UseTTSOptions): UseTTSReturn {
       audioRef.current.load();
       audioRef.current = null;
     }
-    setState({ status: "idle" });
-    onStateChange?.({ status: "idle" });
-  }, [onStateChange]);
+    const next: TTSState = { status: "idle" };
+    setState(next);
+    onStateChangeRef.current?.(next);
+  }, []); // stable
 
   const pause = useCallback(() => {
     if (audioRef.current && !audioRef.current.paused) {
       audioRef.current.pause();
-      setState({ status: "paused" });
-      onStateChange?.({ status: "paused" });
+      const next: TTSState = { status: "paused" };
+      setState(next);
+      onStateChangeRef.current?.(next);
     }
-  }, [onStateChange]);
+  }, []); // stable
 
   const resume = useCallback(() => {
     if (audioRef.current && audioRef.current.paused) {
       audioRef.current.play().catch(() => {});
-      setState({ status: "playing" });
-      onStateChange?.({ status: "playing" });
+      const next: TTSState = { status: "playing" };
+      setState(next);
+      onStateChangeRef.current?.(next);
     }
-  }, [onStateChange]);
+  }, []); // stable
 
   const clearError = useCallback(() => {
     setState((prev) => ({ ...prev, error: undefined }));
@@ -177,7 +184,6 @@ export function useTTS(options: UseTTSOptions): UseTTSReturn {
   };
 }
 
-// Hook for auto-playing AI responses
 export function useAutoTTS(
   aiResponse: string | null,
   options: UseTTSOptions & { enabled?: boolean }
@@ -188,12 +194,8 @@ export function useAutoTTS(
 
   useEffect(() => {
     if (!enabled || !aiResponse || tts.isPlaying) return;
-    
-    // Avoid re-speaking the same response
     if (hasSpokenRef.current === aiResponse) return;
-    
     hasSpokenRef.current = aiResponse;
-    
     const speakText = aiResponse.split("—")[0]?.trim() || aiResponse;
     tts.speak(speakText, { language: ttsOptions.language });
   }, [aiResponse, enabled, tts, ttsOptions.language]);

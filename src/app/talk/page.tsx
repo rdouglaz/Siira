@@ -1,12 +1,16 @@
 "use client"
 
-import { TalkScreen } from "@/components/TalkScreen"
-import { BottomNav } from "@/components/BottomNav"
-import { TopBar } from "@/components/TopBar"
-import { SettingsScreen } from "@/components/SettingsScreen"
 import { useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { useApp } from "@/context/AppContext"
+import { useAuthGuard } from "@/hooks/useAuthGuard"
+import { TalkScreen } from "@/components/TalkScreen"
+import { ThemesScreen } from "@/components/ThemesScreen"
+import { WordsScreen } from "@/components/WordsScreen"
+import { QuizScreen } from "@/components/QuizScreen"
+import { BottomNav } from "@/components/BottomNav"
+import { TopBar } from "@/components/TopBar"
+import { SettingsScreen } from "@/components/SettingsScreen"
 
 const screenVariants = {
   initial: { opacity: 0, y: 14 },
@@ -36,11 +40,6 @@ function ScreenRouter() {
     </AnimatePresence>
   )
 }
-
-import { ThemesScreen } from "@/components/ThemesScreen"
-import { WordsScreen } from "@/components/WordsScreen"
-import { QuizScreen } from "@/components/QuizScreen"
-import { useAuthGuard } from "@/hooks/useAuthGuard"
 
 export default function TalkPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)

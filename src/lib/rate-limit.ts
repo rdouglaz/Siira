@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Simple in-memory rate limiter (for production, use Redis/Upstash)
+// In-memory rate limiter. Works correctly on long-lived servers and in dev.
+// On Vercel/serverless each cold start resets the store, so limits are per-instance
+// rather than global. Swap for an Upstash Redis adapter for global enforcement.
 interface RateLimitEntry {
   count: number;
   resetAt: number;

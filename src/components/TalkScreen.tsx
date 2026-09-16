@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { 
   RotateCcw, Mic, MicOff, Send, Loader2, MessageSquare, FileText, 
@@ -536,7 +536,7 @@ export function TalkScreen() {
         timersRef.current.push(t)
       }
     },
-    [language, selectedThemeId, conversationHistory, addMessage, autoPlayTTS, stuckSignals, ensureWords]
+    [language, selectedThemeId, conversationHistory, addMessage, autoPlayTTS, stuckSignals, ensureWords, isProcessing]
   )
 
   // LLM Hook
@@ -550,8 +550,9 @@ export function TalkScreen() {
     },
   })
 
-  // Speech Hook
-  const speechConfig = createSpeechConfig(language)
+  // Memoize config so useSpeech only recreates the service when language changes,
+  // not on every render.
+  const speechConfig = useMemo(() => createSpeechConfig(language), [language])
   const { 
     state: speechState, 
     startListening, 

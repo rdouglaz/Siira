@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { CheckCircle2, Brain, Flame, Star, Volume2, GraduationCap, ChevronRight } from "lucide-react"
 import { getWordsByLanguage, getCategories, getWordById, type WordEntry } from "@/data/word-inventory"
@@ -442,20 +442,35 @@ function StreakChip({ mastered }: { mastered: number }) {
 
 export function WordsScreen() {
   const { language } = useApp()
-  const { cards, getDueCards, getCard, learnedSet, toggleLearned } = useWords()
-  const categories = getCategories(language).map(cat => ({
-    id: cat,
-    label: cat.charAt(0).toUpperCase() + cat.slice(1).replace(/-/g, ' '),
-    words: getWordsByLanguage(language).filter(w => w.category === cat).map(w => ({
-      id: w.id,
-      text: w.target,
-      romanization: w.romanization,
-      translation: w.meaning,
-    }))
-  }))
-  const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || "")
+  const { cards, getDueCards, learnedSet, toggleLearned } = useWords()
+  const [activeCategoryId, setActiveCategoryId] = useState(() => getCategories(language)[0] || "")
   const [inReview, setInReview] = useState(false)
   const tabsRef = useRef<HTMLDivElement>(null)
+
+  // Memoize: these are linear scans through 500+ entry inventories.
+  const categories = useMemo(
+    () =>
+      getCategories(language).map((cat) => ({
+        id: cat,
+        label: cat.charAt(0).toUpperCase() + cat.slice(1).replace(/-/g, " "),
+        words: getWordsByLanguage(language)
+          .filter((w) => w.category === cat)
+          .map((w) => ({
+            id: w.id,
+            text: w.target,
+            romanization: w.romanization,
+            translation: w.meaning,
+          })),
+      })),
+    [language]
+  )
+
+  const totalWords = useMemo(() => getWordsByLanguage(language).length, [language])
+
+  const masteredCount = useMemo(
+    () => Object.values(cards).filter((c) => c.status === "mastered" && c.wordId.startsWith(language)).length,
+    [language, cards]
+  )
 
   useEffect(() => {
     setActiveCategoryId(getCategories(language)[0] || "")
@@ -464,25 +479,19 @@ export function WordsScreen() {
 
   const activeCategory = categories.find((c) => c.id === activeCategoryId) ?? categories[0]
 
-  // Phase 2: background pre-generate/cache audio for visible category (on-device storage)
-  usePreloadAudio(
-    (activeCategory?.words ?? []).map((w) => ({ text: w.text, language })),
-    !inReview,
-    20
+  // Stable preload items — only recompute when the active category or language changes.
+  const preloadItems = useMemo(
+    () => (activeCategory?.words ?? []).map((w) => ({ text: w.text, language })),
+    [activeCategory, language]
   )
+  usePreloadAudio(preloadItems, !inReview, 20)
 
-  const totalWords = getWordsByLanguage(language).length
   const dueCards = getDueCards(language)
   const dueCount = dueCards.length
-
-  // Count mastered across all SRS cards for this language
-  const masteredCount = getWordsByLanguage(language)
-    .filter((w) => getCard(w.id)?.status === "mastered").length
-
   const learnedCount = learnedSet.size
 
   function getCardStatus(wordId: string): SRSStatus | undefined {
-    return getCard(wordId)?.status
+    return cards[wordId]?.status
   }
 
   return (

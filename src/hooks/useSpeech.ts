@@ -25,61 +25,67 @@ export interface UseSpeechReturn {
 
 export function useSpeech(options: UseSpeechOptions): UseSpeechReturn {
   const { config, onFinalTranscript, onSpeechStarted, onUtteranceEnd, onError, enabled = true } = options;
-  
+
   const [state, setState] = useState<SpeechState>("idle");
   const [lastTranscript, setLastTranscript] = useState("");
   const [error, setError] = useState<Error | null>(null);
-  
+
   const serviceRef = useRef<ReturnType<typeof createDeepgramSpeechService> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Initialize service
-  useEffect(() => {
-    if (!enabled) return;
-    
-    serviceRef.current = createDeepgramSpeechService(config, {
-      onStateChange: (newState) => {
-        if (isMountedRef.current) {
-          setState(newState);
-        }
-      },
-      onTranscript: (result: TranscriptResult) => {
-        if (isMountedRef.current) {
-          setLastTranscript(result.text);
-          if (result.isFinal && result.text.trim()) {
-            onFinalTranscript(result.text.trim());
-          }
-        }
-      },
-      onSpeechStarted: () => {
-        if (isMountedRef.current) {
-          onSpeechStarted?.();
-        }
-      },
-      onUtteranceEnd: () => {
-        if (isMountedRef.current) {
-          onUtteranceEnd?.();
-        }
-      },
-      onError: (err) => {
-        if (isMountedRef.current) {
-          setError(err);
-          onError?.(err);
-        }
-      },
-      onOpen: () => {
-        console.log("[Speech] Service connected");
-      },
-      onClose: () => {
-        console.log("[Speech] Service disconnected");
-      },
-    });
+  // Stable refs for callbacks — always call the latest version without restarting the service.
+  const onFinalTranscriptRef = useRef(onFinalTranscript);
+  const onSpeechStartedRef = useRef(onSpeechStarted);
+  const onUtteranceEndRef = useRef(onUtteranceEnd);
+  const onErrorRef = useRef(onError);
+  onFinalTranscriptRef.current = onFinalTranscript;
+  onSpeechStartedRef.current = onSpeechStarted;
+  onUtteranceEndRef.current = onUtteranceEnd;
+  onErrorRef.current = onError;
 
+  // Unmount cleanup only — keeps isMountedRef accurate for the full component lifetime.
+  useEffect(() => {
     return () => {
       isMountedRef.current = false;
       serviceRef.current?.stop();
     };
-  }, [config, onFinalTranscript, onSpeechStarted, onUtteranceEnd, onError, enabled]);
+  }, []);
+
+  // Recreate service only when config shape or enabled flag changes — NOT on callback changes.
+  useEffect(() => {
+    if (!enabled) return;
+
+    serviceRef.current = createDeepgramSpeechService(config, {
+      onStateChange: (newState) => {
+        if (isMountedRef.current) setState(newState);
+      },
+      onTranscript: (result: TranscriptResult) => {
+        if (!isMountedRef.current) return;
+        setLastTranscript(result.text);
+        if (result.isFinal && result.text.trim()) {
+          onFinalTranscriptRef.current(result.text.trim());
+        }
+      },
+      onSpeechStarted: () => {
+        if (isMountedRef.current) onSpeechStartedRef.current?.();
+      },
+      onUtteranceEnd: () => {
+        if (isMountedRef.current) onUtteranceEndRef.current?.();
+      },
+      onError: (err) => {
+        if (!isMountedRef.current) return;
+        setError(err);
+        onErrorRef.current?.(err);
+      },
+      onOpen: () => console.log("[Speech] Service connected"),
+      onClose: () => console.log("[Speech] Service disconnected"),
+    });
+
+    return () => {
+      serviceRef.current?.stop();
+      serviceRef.current = null;
+    };
+  }, [config, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startListening = useCallback(async () => {
     setError(null);
@@ -89,15 +95,13 @@ export function useSpeech(options: UseSpeechOptions): UseSpeechReturn {
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
-        onError?.(error);
+        onErrorRef.current?.(error);
       }
     }
-  }, [state, onError]);
+  }, [state]);
 
   const stopListening = useCallback(() => {
-    if (serviceRef.current) {
-      serviceRef.current.stop();
-    }
+    serviceRef.current?.stop();
   }, []);
 
   const clearError = useCallback(() => {
@@ -116,7 +120,6 @@ export function useSpeech(options: UseSpeechOptions): UseSpeechReturn {
 }
 
 // Helper to create config from environment
-// Phase 3: prefer Flux real-time model, fallback to Nova-2 via env override.
 export function createSpeechConfig(language: "zh" | "de"): DeepgramConfig {
   const languageMap: Record<"zh" | "de", string> = {
     zh: "zh-CN",

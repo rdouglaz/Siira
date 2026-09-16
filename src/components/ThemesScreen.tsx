@@ -224,12 +224,20 @@ export function ThemesScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const supabase = createClient();
+  // Create once — createBrowserClient throws when env vars are absent (e.g. SSR).
+  const [supabase] = useState(() => {
+    if (
+      !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    ) return null;
+    return createClient();
+  });
 
   const fetchThemes = async () => {
     setIsLoading(true);
     setError(null);
     try {
+      if (!supabase) throw new Error("Supabase not configured");
       const { data, error } = await supabase
         .from("themes")
         .select("*")
