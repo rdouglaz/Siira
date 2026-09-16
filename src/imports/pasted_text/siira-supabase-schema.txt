@@ -1,0 +1,350 @@
+-- Siira Language Learning App - Supabase Schema
+-- Run this in the Supabase SQL Editor.
+-- IDEMPOTENT: safe to run multiple times (uses IF NOT EXISTS and
+-- DROP ... IF EXISTS before every CREATE POLICY / CREATE TRIGGER).
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============================================
+-- PROFILES TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  display_name TEXT,
+  preferred_language TEXT DEFAULT 'zh' CHECK (preferred_language IN ('zh', 'de')),
+  daily_goal_minutes INTEGER DEFAULT 10 CHECK (daily_goal_minutes IN (10, 15, 20)),
+  current_streak INTEGER DEFAULT 0,
+  longest_streak INTEGER DEFAULT 0,
+  last_active_date DATE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- Profiles policies
+DROP POLICY IF EXISTS "Users can view their own profile" ON profiles;
+CREATE POLICY "Users can view their own profile"
+  ON profiles FOR SELECT
+  USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can insert their own profile" ON profiles;
+CREATE POLICY "Users can insert their own profile"
+  ON profiles FOR INSERT
+  WITH CHECK (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can update their own profile" ON profiles;
+CREATE POLICY "Users can update their own profile"
+  ON profiles FOR UPDATE
+  USING (auth.uid() = id);
+
+-- Auto-create profile on signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, display_name, preferred_language)
+  VALUES (NEW.id, NEW.raw_user_meta_data->>'display_name', COALESCE(NEW.raw_user_meta_data->>'preferred_language', 'zh'));
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Update updated_at on profile changes
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_profiles_updated_at ON profiles;
+CREATE TRIGGER update_profiles_updated_at
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- ============================================
+-- SRS CARDS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS srs_cards (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  language TEXT NOT NULL CHECK (language IN ('zh', 'de')),
+  word_id TEXT NOT NULL, -- e.g., 'zh-你', 'de-Hallo'
+  interval INTEGER DEFAULT 0,
+  ease_factor REAL DEFAULT 2.5,
+  repetitions INTEGER DEFAULT 0,
+  next_review TIMESTAMPTZ DEFAULT NOW(),
+  status TEXT DEFAULT 'new' CHECK (status IN ('new', 'learning', 'review', 'mastered')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, word_id)
+);
+
+-- Enable RLS
+ALTER TABLE srs_cards ENABLE ROW LEVEL SECURITY;
+
+-- SRS Cards policies
+DROP POLICY IF EXISTS "Users can view their own SRS cards" ON srs_cards;
+CREATE POLICY "Users can view their own SRS cards"
+  ON srs_cards FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own SRS cards" ON srs_cards;
+CREATE POLICY "Users can insert their own SRS cards"
+  ON srs_cards FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update their own SRS cards" ON srs_cards;
+CREATE POLICY "Users can update their own SRS cards"
+  ON srs_cards FOR UPDATE
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete their own SRS cards" ON srs_cards;
+CREATE POLICY "Users can delete their own SRS cards"
+  ON srs_cards FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- Index for fast due card queries
+-- NOTE: partial index with NOW() is not allowed (NOW() is not IMMUTABLE),
+-- so index the full composite and filter next_review <= NOW() at query time.
+CREATE INDEX IF NOT EXISTS idx_srs_cards_user_due ON srs_cards (user_id, next_review);
+
+-- Update updated_at on SRS card changes
+DROP TRIGGER IF EXISTS update_srs_cards_updated_at ON srs_cards;
+CREATE TRIGGER update_srs_cards_updated_at
+  BEFORE UPDATE ON srs_cards
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- ============================================
+-- THEMES TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS themes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  language TEXT NOT NULL CHECK (language IN ('zh', 'de')),
+  difficulty TEXT NOT NULL CHECK (difficulty IN ('Beginner', 'Intermediate', 'Advanced')),
+  content JSONB NOT NULL DEFAULT '{}',
+  is_daily BOOLEAN DEFAULT FALSE,
+  generated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS
+ALTER TABLE themes ENABLE ROW LEVEL SECURITY;
+
+-- Themes policies (public read for all authenticated users)
+DROP POLICY IF EXISTS "Authenticated users can view themes" ON themes;
+CREATE POLICY "Authenticated users can view themes"
+  ON themes FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+-- Only service role can insert/update themes (for cron jobs)
+DROP POLICY IF EXISTS "Service role can manage themes" ON themes;
+CREATE POLICY "Service role can manage themes"
+  ON themes FOR ALL
+  USING (auth.role() = 'service_role');
+
+-- ============================================
+-- USER PROGRESS TABLE (summary)
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_progress (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  total_words_learned INTEGER DEFAULT 0,
+  total_reviews INTEGER DEFAULT 0,
+  level TEXT DEFAULT 'Newbie',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS
+ALTER TABLE user_progress ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own progress" ON user_progress;
+CREATE POLICY "Users can view their own progress"
+  ON user_progress FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own progress" ON user_progress;
+CREATE POLICY "Users can insert their own progress"
+  ON user_progress FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update their own progress" ON user_progress;
+CREATE POLICY "Users can update their own progress"
+  ON user_progress FOR UPDATE
+  USING (auth.uid() = user_id);
+
+-- Update updated_at on progress changes
+DROP TRIGGER IF EXISTS update_user_progress_updated_at ON user_progress;
+CREATE TRIGGER update_user_progress_updated_at
+  BEFORE UPDATE ON user_progress
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- ============================================
+-- CONVERSATIONS TABLE (for transcript history)
+-- ============================================
+CREATE TABLE IF NOT EXISTS conversations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  language TEXT NOT NULL CHECK (language IN ('zh', 'de')),
+  theme_id TEXT,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  romanization TEXT,
+  translation TEXT,
+  breakdown JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS
+ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own conversations" ON conversations;
+CREATE POLICY "Users can view their own conversations"
+  ON conversations FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own conversations" ON conversations;
+CREATE POLICY "Users can insert their own conversations"
+  ON conversations FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+-- Index for conversation history
+CREATE INDEX IF NOT EXISTS idx_conversations_user_created ON conversations (user_id, created_at DESC);
+
+-- ============================================
+-- DAILY QUIZZES TABLE (AI-generated, one row per language × date × type)
+-- ============================================
+CREATE TABLE IF NOT EXISTS daily_quizzes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  language TEXT NOT NULL CHECK (language IN ('zh', 'de')),
+  quiz_date DATE NOT NULL,
+  quiz_type TEXT NOT NULL CHECK (quiz_type IN ('multiple-choice', 'matching', 'fill-blank')),
+  content JSONB NOT NULL DEFAULT '{}',
+  generated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(language, quiz_date, quiz_type)
+);
+
+-- Enable RLS
+ALTER TABLE daily_quizzes ENABLE ROW LEVEL SECURITY;
+
+-- Daily quiz policies (public read for all authenticated users;
+-- past days form the fallback inventory when AI generation is down)
+DROP POLICY IF EXISTS "Authenticated users can view daily quizzes" ON daily_quizzes;
+CREATE POLICY "Authenticated users can view daily quizzes"
+  ON daily_quizzes FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+-- Only service role can insert/update quizzes (for cron jobs)
+DROP POLICY IF EXISTS "Service role can manage daily quizzes" ON daily_quizzes;
+CREATE POLICY "Service role can manage daily quizzes"
+  ON daily_quizzes FOR ALL
+  USING (auth.role() = 'service_role');
+
+-- Index for fast daily + fallback lookups
+CREATE INDEX IF NOT EXISTS idx_daily_quizzes_lookup ON daily_quizzes (language, quiz_type, quiz_date DESC);
+
+-- ============================================
+-- HELPER FUNCTIONS
+-- ============================================
+
+-- Get user's due SRS cards
+CREATE OR REPLACE FUNCTION get_due_srs_cards(p_user_id UUID, p_language TEXT)
+RETURNS SETOF srs_cards AS $$
+BEGIN
+  RETURN QUERY
+  SELECT * FROM srs_cards
+  WHERE user_id = p_user_id
+    AND language = p_language
+    AND next_review <= NOW()
+  ORDER BY next_review ASC;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Get user's streak info
+CREATE OR REPLACE FUNCTION get_user_streak(p_user_id UUID)
+RETURNS TABLE (
+  current_streak INTEGER,
+  longest_streak INTEGER,
+  last_active_date DATE
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT current_streak, longest_streak, last_active_date
+  FROM profiles
+  WHERE id = p_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Update streak (call after a review session)
+CREATE OR REPLACE FUNCTION update_streak(p_user_id UUID)
+RETURNS VOID AS $$
+DECLARE
+  v_last_active DATE;
+  v_current_streak INTEGER;
+  v_longest_streak INTEGER;
+BEGIN
+  SELECT last_active_date, current_streak, longest_streak
+  INTO v_last_active, v_current_streak, v_longest_streak
+  FROM profiles
+  WHERE id = p_user_id;
+
+  IF v_last_active IS NULL OR v_last_active < CURRENT_DATE - INTERVAL '1 day' THEN
+    -- Streak broken or first time
+    v_current_streak := 1;
+  ELSIF v_last_active = CURRENT_DATE - INTERVAL '1 day' THEN
+    -- Continue streak
+    v_current_streak := v_current_streak + 1;
+  END IF;
+
+  v_longest_streak := GREATEST(v_longest_streak, v_current_streak);
+
+  UPDATE profiles
+  SET current_streak = v_current_streak,
+      longest_streak = v_longest_streak,
+      last_active_date = CURRENT_DATE,
+      updated_at = NOW()
+  WHERE id = p_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Update user progress summary
+CREATE OR REPLACE FUNCTION update_user_progress(p_user_id UUID)
+RETURNS VOID AS $$
+DECLARE
+  v_mastered INTEGER;
+  v_total_reviews INTEGER;
+  v_level TEXT;
+BEGIN
+  SELECT COUNT(*) INTO v_mastered
+  FROM srs_cards
+  WHERE user_id = p_user_id AND status = 'mastered';
+
+  SELECT COALESCE(SUM(repetitions), 0) INTO v_total_reviews
+  FROM srs_cards
+  WHERE user_id = p_user_id;
+
+  IF v_mastered >= 200 THEN v_level := 'Advanced';
+  ELSIF v_mastered >= 50 THEN v_level := 'Intermediate';
+  ELSIF v_mastered >= 15 THEN v_level := 'Elementary';
+  ELSIF v_mastered >= 5 THEN v_level := 'Beginner';
+  ELSE v_level := 'Newbie';
+  END IF;
+
+  INSERT INTO user_progress (user_id, total_words_learned, total_reviews, level, updated_at)
+  VALUES (p_user_id, v_mastered, v_total_reviews, v_level, NOW())
+  ON CONFLICT (user_id) DO UPDATE SET
+    total_words_learned = v_mastered,
+    total_reviews = v_total_reviews,
+    level = v_level,
+    updated_at = NOW();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

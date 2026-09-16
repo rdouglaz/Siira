@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/server";
 import { generateTutorResponse } from "@/lib/llm/service";
 import { getThemeGenerationPrompt, parseThemeResponse, validateThemeContent } from "@/lib/themes/prompts";
 import { ThemeContent, Language, Difficulty } from "@/lib/themes/types";
@@ -58,13 +58,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Insert into Supabase
-    const supabase = await createServerClient();
-    
+    // Use service-role client — themes RLS only allows writes from service_role.
+    const supabase = await createServiceClient();
+
     // First, mark any existing daily themes as non-daily
     await supabase
       .from("themes")
-      .update({ is_daily: false, updated_at: new Date().toISOString() })
+      .update({ is_daily: false })
       .eq("language", language)
       .eq("is_daily", true);
 

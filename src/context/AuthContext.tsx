@@ -21,7 +21,7 @@ interface AuthContextValue {
   streak: number;
   prefs: UserPrefs;
   updatePrefs: (p: Partial<UserPrefs>) => Promise<void>;
-  signInWithEmail: (email: string) => Promise<{ error: Error | null }>;
+  signInWithEmail: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -135,14 +135,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [prefs, user, supabase]);
 
-  const signInWithEmail = useCallback(async (email: string) => {
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: new Error("Auth not configured") };
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
-      },
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error };
   }, [supabase]);
 

@@ -327,7 +327,8 @@ export function TalkScreen() {
         body: JSON.stringify({
           language,
           themeId: selectedThemeId,
-          role: entry.role,
+          // Schema and API both require "assistant", not "ai"
+          role: entry.role === "ai" ? "assistant" : entry.role,
           content: entry.content,
           romanization: entry.romanization,
           translation: entry.translation,
