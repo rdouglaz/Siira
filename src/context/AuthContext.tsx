@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { Profile } from "@/lib/supabase/types";
@@ -79,7 +79,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [user, supabase]);
 
-  // Initial session check
+  // Always-current ref so the subscription closure never captures a stale fetchProfile.
+  const fetchProfileRef = useRef(fetchProfile);
+  fetchProfileRef.current = fetchProfile;
+
+  // Initial session check — deps are [supabase] ONLY.
+  // Using fetchProfileRef.current() inside the subscription breaks the dep cycle:
+  // fetchProfile depends on [user], user changes on auth event → fetchProfile gets a
+  // new reference → without the ref pattern, this effect would re-run on every login,
+  // calling initAuth() again → setUser(newObj) → new fetchProfile → infinite loop.
   useEffect(() => {
     if (!supabase) {
       setLoading(false);
@@ -99,12 +107,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
-        await fetchProfile();
+        await fetchProfileRef.current();
       }
     );
 
     return () => subscription.unsubscribe();
-  }, [supabase, fetchProfile]);
+  }, [supabase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch profile when user changes
   useEffect(() => {

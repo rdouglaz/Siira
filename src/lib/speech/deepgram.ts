@@ -68,15 +68,31 @@ export function createDeepgramSpeechService(
   async function getMicrophoneStream(): Promise<MediaStream> {
     try {
       setState("requesting-permission");
-      const micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+
+      // Race getUserMedia against a 15 s timeout so the browser never hangs
+      // indefinitely (e.g. when the permission dialog is blocked in an iframe).
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Microphone access timed out. Please allow microphone access and try again.")),
+          15000
+        );
       });
+
+      const micStream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        }),
+        timeoutPromise,
+      ]);
+
+      clearTimeout(timeoutId!);
       return micStream;
     } catch (error) {
       if (error instanceof DOMException) {
@@ -85,6 +101,9 @@ export function createDeepgramSpeechService(
         }
         if (error.name === "NotFoundError") {
           throw new Error("No microphone found. Please connect a microphone and try again.");
+        }
+        if (error.name === "SecurityError") {
+          throw new Error("Microphone access is blocked in this context. Please open the app directly in your browser.");
         }
       }
       throw new Error(`Microphone access failed: ${error instanceof Error ? error.message : "Unknown error"}`);
