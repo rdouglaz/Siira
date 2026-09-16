@@ -128,7 +128,7 @@ export function createDeepgramSpeechService(
     try {
       currentToken = await fetchDeepgramToken();
     } catch (error) {
-      throw new Error(`Failed to get Deepgram token: ${error instanceof Error ? error.message : String(error)}`);
+      throw error instanceof Error ? error : new Error(String(error));
     }
 
     const url = buildDeepgramUrl(config);
