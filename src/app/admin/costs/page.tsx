@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 interface CostSummary {
   totalCost: number;
@@ -16,13 +17,24 @@ export default function CostsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/llm/costs?hours=24&limit=50")
-      .then(async (r) => {
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error || "Failed to load costs");
-        setSummary(data.summary);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const load = async () => {
+      try {
+        const { data, error } = await createClient().from("llm_usage").select("provider, model, tokens, language").gte("created_at", since).order("created_at", { ascending: false }).limit(50);
+        if (error) throw error;
+        const blank = () => ({ cost: 0, tokens: 0, requests: 0 });
+        const summary: CostSummary = { totalCost: 0, totalTokens: 0, totalRequests: 0, byProvider: {}, byModel: {}, byLanguage: {} };
+        for (const item of data ?? []) {
+          const buckets = [[summary.byProvider, item.provider], [summary.byModel, item.model], [summary.byLanguage, item.language]] as const;
+          summary.totalTokens += item.tokens; summary.totalRequests += 1;
+          for (const [bucket, key] of buckets) { const value = bucket[key] ?? (bucket[key] = blank()); value.tokens += item.tokens; value.requests += 1; }
+        }
+        setSummary(summary);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    void load();
   }, []);
 
   return (
@@ -30,7 +42,7 @@ export default function CostsPage() {
       <div className="flex flex-col flex-1 max-w-md mx-auto w-full px-5 py-6">
         <h1 className="text-2xl font-bold text-[#1C1917]">LLM Costs (24h)</h1>
         <p className="text-sm text-[#78716C] mt-1">
-          In-memory cost tracking from <code>/api/llm/costs</code>. For production, ship logs to your observability stack.
+          Persistent usage tracking from Supabase Edge Functions.
         </p>
 
         {error && <p className="text-sm text-[#DC2626] mt-4">{error}</p>}

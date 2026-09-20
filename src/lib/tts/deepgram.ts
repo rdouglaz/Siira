@@ -2,7 +2,7 @@
 
 /**
  * @deprecated PHASE 1 SECURITY: Do not use direct Deepgram calls from client.
- * Use `useTTS` hook -> POST `/api/deepgram/tts` proxy instead.
+ * The UI uses `useTTS`, which streams audio through the Supabase Edge Function.
  * This file is kept for reference/tests only and must not receive a real API key in the browser.
  */
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Eye, EyeOff, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -17,6 +17,15 @@ export default function AuthPage() {
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("code");
+    if (!code) return;
+    createClient().auth.exchangeCodeForSession(code).then(({ error }) => {
+      if (error) setError(error.message);
+      else router.replace("/talk");
+    });
+  }, [router]);
 
   const valid = email.includes("@") && password.length >= 6;
 
@@ -53,7 +62,7 @@ export default function AuthPage() {
           options: {
             emailRedirectTo:
               typeof window !== "undefined"
-                ? `${window.location.origin}/auth/callback?next=/talk`
+                ? `${window.location.origin}/auth`
                 : undefined,
           },
         });

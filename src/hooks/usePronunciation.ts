@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { createDeepgramSpeechService } from "@/lib/speech/deepgram";
 import { createSpeechConfig } from "@/hooks/useSpeech";
 import type { PronunciationResult } from "@/lib/pronunciation/scoring";
+import { scorePronunciation } from "@/lib/pronunciation/scoring";
 
 export function usePronunciation(language: "zh" | "de") {
   const [checking, setChecking] = useState(false);
@@ -44,18 +45,7 @@ export function usePronunciation(language: "zh" | "de") {
             if (!r.isFinal || !r.text.trim()) return;
             clearTimeout(timer);
             try {
-              const res = await fetch("/api/deepgram/pronunciation", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  expectedText,
-                  transcript: r.text,
-                  language,
-                }),
-              });
-              const data = await res.json();
-              if (!res.ok) throw new Error(data.error || "Scoring failed");
-              finish(data.result as PronunciationResult);
+              finish(scorePronunciation(expectedText, r.text, [], language));
             } catch (e) {
               finish(null, e instanceof Error ? e : new Error(String(e)));
             }

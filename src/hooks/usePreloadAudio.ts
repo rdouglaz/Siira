@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { audioCacheKey, getCachedAudio, putCachedAudio } from "@/lib/audio/cache";
+import { fetchEdgeAudio } from "@/lib/supabase/edge";
 
 export function usePreloadAudio(
   items: { text: string; language: "zh" | "de" }[],
@@ -29,13 +30,7 @@ export function usePreloadAudio(
           const cached = await getCachedAudio(key);
           if (cached) continue;
 
-          const res = await fetch("/api/deepgram/tts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: item.text, language: item.language }),
-          });
-          if (!res.ok) continue;
-          const blob = await res.blob();
+          const blob = await fetchEdgeAudio({ text: item.text, language: item.language });
           await putCachedAudio(key, blob, item.language);
           // Small delay to avoid hammering the proxy
           await new Promise((r) => setTimeout(r, 150));

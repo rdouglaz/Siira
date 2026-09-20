@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ListChecks, Link2, PenLine, ChevronRight, ArrowLeft, Loader2 } from "lucide-react"
 import { useApp } from "@/context/AppContext"
+import { createClient } from "@/lib/supabase/client"
 import {
   generateMultipleChoice,
   generateMatchingSet,
@@ -135,15 +136,15 @@ async function fetchDailyQuiz(
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 10000)
   try {
-    const res = await fetch(
-      `/api/quiz/daily?language=${language}&type=${type}`,
-      { signal: controller.signal }
-    )
-    if (!res.ok) return { source: "local", content: null }
-    const data = await res.json()
+    const supabase = createClient()
+    const today = new Date().toISOString().slice(0, 10)
+    const { data: todayQuiz } = await supabase.from("daily_quizzes").select("content, quiz_date").eq("language", language).eq("quiz_type", type).eq("quiz_date", today).maybeSingle()
+    if (todayQuiz?.content) return { source: "daily", content: todayQuiz.content }
+    const { data: previous } = await supabase.from("daily_quizzes").select("content").eq("language", language).eq("quiz_type", type).order("quiz_date", { ascending: false }).limit(20)
+    const data = previous?.length ? { content: previous[Math.floor(Math.random() * previous.length)].content } : null
     if (!data?.content) return { source: "local", content: null }
     return {
-      source: data.source === "daily" ? "daily" : "fallback",
+      source: "fallback",
       content: data.content,
     }
   } catch {

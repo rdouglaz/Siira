@@ -22,6 +22,8 @@ import { useWords } from "@/context/WordsContext"
 import { getWordsByLanguage } from "@/data/word-inventory"
 import { extractVocabFromBreakdown, findInventoryIdByText } from "@/lib/vocabulary/extract"
 import { getScaffoldingLevel, scaffoldingHint, shouldForceQuality, type StuckSignals } from "@/lib/scaffolding/stuck"
+import { createClient } from "@/lib/supabase/client"
+import { callEdge } from "@/lib/supabase/edge"
 
 // ─── Timing constants (ms) ───────────────────────────────────────────────────
 const T_IDLE_RETURN = 6800
@@ -321,20 +323,16 @@ export function TalkScreen() {
     breakdown?: unknown;
   }) {
     try {
-      void fetch("/api/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          language,
-          themeId: selectedThemeId,
-          // Schema and API both require "assistant", not "ai"
+      const supabase = createClient()
+      void supabase.auth.getUser().then(({ data: { user } }) => {
+        if (!user) return
+        return supabase.from("conversations").insert({
+          user_id: user.id, language, theme_id: selectedThemeId ?? null,
           role: entry.role === "ai" ? "assistant" : entry.role,
-          content: entry.content,
-          romanization: entry.romanization,
-          translation: entry.translation,
-          breakdown: entry.breakdown ?? [],
-        }),
-      }).catch(() => {});
+          content: entry.content, romanization: entry.romanization ?? null,
+          translation: entry.translation ?? null, breakdown: entry.breakdown ?? [],
+        })
+      }).catch(() => {})
     } catch {}
   }
 
@@ -416,25 +414,10 @@ export function TalkScreen() {
         )
 
         // Call LLM
-        const response = await fetch("/api/llm/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: trimmed }],
-            language,
-            context: {
-              themeId: selectedThemeId || undefined,
-              recentExchanges,
-            },
-            forceQuality,
-          }),
+        const { data } = await callEdge<{ content: string }>("llm/chat", {
+          messages: [{ role: "user", content: trimmed }], language,
+          context: { themeId: selectedThemeId || undefined, recentExchanges }, forceQuality,
         })
-
-        const data = await response.json()
-
-        if (!response.ok) {
-          throw new Error(data.error || `HTTP ${response.status}`)
-        }
 
         // Parse AI response
         const aiContent = data.content

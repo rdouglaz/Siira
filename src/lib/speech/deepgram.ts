@@ -1,9 +1,9 @@
 "use client";
 
 import { DeepgramConfig, SpeechState, TranscriptResult, SpeechCallbacks, SpeechService } from "./types";
+import { callEdge } from "@/lib/supabase/edge";
 
 const DEEPGRAM_BASE_URL = "wss://api.deepgram.com/v1/listen";
-const TOKEN_ENDPOINT = "/api/deepgram/token";
 
 function buildDeepgramUrl(config: DeepgramConfig): string {
   const params = new URLSearchParams({
@@ -23,20 +23,7 @@ function buildDeepgramUrl(config: DeepgramConfig): string {
 }
 
 async function fetchDeepgramToken(): Promise<string> {
-  const response = await fetch(TOKEN_ENDPOINT, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(`Failed to get Deepgram token: ${response.status} - ${error.error || "Unknown error"}`);
-  }
-
-  const data = await response.json();
+  const { data } = await callEdge<{ token: string }>("deepgram/token", undefined, { method: "GET", cache: "no-store" });
   return data.token;
 }
 

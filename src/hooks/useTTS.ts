@@ -3,8 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { TTSState, TTSVoice } from "@/lib/tts/types";
 import { audioCacheKey, getCachedAudio, putCachedAudio } from "@/lib/audio/cache";
-
-const TTS_ENDPOINT = "/api/deepgram/tts";
+import { fetchEdgeAudio } from "@/lib/supabase/edge";
 
 export interface UseTTSOptions {
   language: "zh" | "de";
@@ -68,23 +67,7 @@ export function useTTS(options: UseTTSOptions): UseTTSReturn {
         let audioBlob: Blob | null = await getCachedAudio(cacheKey);
 
         if (!audioBlob) {
-          const response = await fetch(TTS_ENDPOINT, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text: text.trim(),
-              language: activeLanguage,
-              voice: speakOptions?.voice,
-              preferFemale: true,
-            }),
-          });
-
-          if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || `TTS failed: ${response.status}`);
-          }
-
-          audioBlob = await response.blob();
+          audioBlob = await fetchEdgeAudio({ text: text.trim(), language: activeLanguage, voice: speakOptions?.voice, preferFemale: true });
           await putCachedAudio(cacheKey, audioBlob, activeLanguage);
         }
 

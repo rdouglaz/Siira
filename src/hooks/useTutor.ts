@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { Language } from "@/lib/llm/types";
+import { callEdge } from "@/lib/supabase/edge";
 
 export interface TutorMessage {
   id: string;
@@ -41,26 +42,10 @@ export function useTutor(options: UseTutorOptions) {
           []
         );
 
-        const response = await fetch("/api/llm/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: userMessage }],
-            language,
-            context: {
-              themeId,
-              userLevel,
-              recentExchanges,
-            },
-            forceQuality,
-          }),
+        const { data } = await callEdge<{ content: string; modelUsed: string; latencyMs?: number }>("llm/chat", {
+          messages: [{ role: "user", content: userMessage }], language,
+          context: { themeId, userLevel, recentExchanges }, forceQuality,
         });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || `HTTP ${response.status}`);
-        }
 
         const message: TutorMessage = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -91,22 +76,7 @@ export function useTutor(options: UseTutorOptions) {
       setLastError(null);
 
       try {
-        const response = await fetch("/api/llm/explain", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            language,
-            userMessage,
-            aiReply,
-            context,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || `HTTP ${response.status}`);
-        }
+        const { data } = await callEdge<{ content: string }>("llm/explain", { language, userMessage, aiReply, context });
 
         return data.content;
       } catch (error) {

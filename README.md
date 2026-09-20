@@ -11,13 +11,13 @@ A production-ready language learning app built with Next.js 15, React 19, TypeSc
 - **Spaced Repetition (SRS)**: SM-2 algorithm with Supabase persistence + vocabulary extracted from conversations
 - **Scaffolding**: Stuck-state detection with progressive hints + Help mode
 - **Authentication**: Magic Link email auth via Supabase
-- **Daily Themes**: Auto-generated themes via Vercel Cron (6 AM UTC)
+- **Daily Themes**: Stored in Supabase; schedule generation with Supabase Cron
 - **Conversations**: Persisted to Supabase, exportable
 - **Progress**: Mastery distribution, streak calendar, SRS export/import
 - **PWA Support**: Installable, offline-capable with service worker
 - **Cross-platform**: Capacitor shell for iOS/Android (loads hosted web app)
 - **Error Boundaries**: Graceful error handling with retry
-- **Cost observability**: `/admin/costs` + `/api/llm/costs`
+- **Cost observability**: `/admin/costs` backed by Supabase `llm_usage`
 
 ## Tech Stack
 
@@ -25,7 +25,7 @@ A production-ready language learning app built with Next.js 15, React 19, TypeSc
 - **Styling**: Tailwind CSS v4 + Framer Motion
 - **Database/Auth**: Supabase (PostgreSQL + Auth)
 - **AI**: Deepgram (STT/TTS) + Multi-provider LLM
-- **Deployment**: Vercel
+- **Deployment**: Static Next export + Supabase Edge Functions
 
 ## Getting Started
 
@@ -61,13 +61,12 @@ Open http://localhost:8443
 
 Copy `.env.example` to `.env.local` and fill in:
 
-#### Server-only (SECRET - never expose to client)
+#### Supabase Edge Function secrets (never expose to the client)
 ```
 DEEPGRAM_API_KEY=          # Deepgram STT/TTS
 MISTRAL_API_KEY=           # Mistral models
 GEMINI_API_KEY=            # Google Gemini
 NVIDIA_NIM_API_KEY=        # NVIDIA Nemotron
-SUPABASE_SERVICE_ROLE_KEY= # Supabase admin (optional)
 CRON_SECRET=               # Secure random string for cron protection
 ```
 
@@ -75,7 +74,6 @@ CRON_SECRET=               # Secure random string for cron protection
 ```
 NEXT_PUBLIC_SUPABASE_URL=       # https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=  # anon key
-NEXT_PUBLIC_APP_URL=            # http://localhost:8443 (dev) or https://your-app.vercel.app
 ```
 
 ## Supabase Setup
@@ -99,48 +97,28 @@ The app automatically falls back through providers if one fails or rate-limits.
 
 1. Create account at console.deepgram.com
 2. Generate API key
-3. Add to `DEEPGRAM_API_KEY` (server-side only!)
-3. The client gets short-lived tokens via `/api/deepgram/token`
+3. Store it with `supabase secrets set DEEPGRAM_API_KEY=...`; the Edge Function issues short-lived client tokens.
 
-## Deployment to Vercel
+## Supabase deployment
 
-### 1. Push to GitHub
+Deploy the database migration and Edge Function, then host the generated `out/` directory on any static host:
+
 ```bash
-git add .
-git commit -m "Initial commit"
-git push origin main
+supabase db push
+supabase secrets set DEEPGRAM_API_KEY=... MISTRAL_API_KEY=... GEMINI_API_KEY=... NVIDIA_NIM_API_KEY=...
+supabase functions deploy siira-api
+pnpm build
 ```
 
-### 2. Import on Vercel
-- Go to vercel.com/new
-- Import your GitHub repo
-- Vercel auto-detects Next.js
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in the static host's build environment.
 
-### 3. Configure Environment Variables
-In Vercel dashboard → Settings → Environment Variables, add all variables from `.env.example`:
-- Mark `DEEPGRAM_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY`, `NVIDIA_NIM_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET` as **Secret** (server-only)
-- Mark `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_APP_URL` as **Plaintext** (client-safe)
-
-### 4. Configure Cron
-The `vercel.json` includes:
-```json
-{
-  "crons": [{ "path": "/api/cron/generate-themes", "schedule": "0 6 * * *" }]
-}
-```
-This runs daily at 6 AM UTC. The endpoint is protected by `CRON_SECRET`.
-
-### 5. Deploy
-Click Deploy. Vercel will:
-- Build the app
-- Configure the cron job
-- Provide a production URL
+Schedule `POST /functions/v1/siira-api/jobs/themes` at 06:00 UTC and `POST /functions/v1/siira-api/jobs/quizzes` at 06:30 UTC through Supabase Cron (or another scheduler), passing `x-cron-secret` with your `CRON_SECRET`.
 
 ## Supabase Dashboard (Post-Deploy)
 
 1. Go to Authentication → Settings → URL Configuration
-2. Set **Site URL** to your Vercel URL
-3. Add **Redirect URLs**: `https://your-app.vercel.app/**`
+2. Set **Site URL** to your static-host URL
+3. Add **Redirect URLs**: `https://your-app.example/**`
 4. Enable "Confirm email" if desired
 
 ## Project Structure
@@ -148,11 +126,6 @@ Click Deploy. Vercel will:
 ```
 src/
 ├── app/
-│   ├── api/
-│   │   ├── llm/chat/route.ts       # Multi-provider LLM
-│   │   ├── llm/explain/route.ts    # Explanations
-│   │   ├── deepgram/token/route.ts # Secure STT token
-│   │   ├── deepgram/tts/route.ts   # Secure TTS proxy
 │   │   ├── themes/generate/route.ts # Theme generation
 │   │   └── cron/generate-themes/   # Cron endpoint
 │   ├── talk/                       # Talk screen
@@ -189,25 +162,11 @@ src/
 
 ## Key Security Features
 
-- **Deepgram API key never exposed to client** - tokens fetched from `/api/deepgram/token`
-- **TTS proxy** - `/api/deepgram/tts` keeps API key server-side
+- **Deepgram API key never exposed to client** - only the Edge Function reads it
+- **TTS proxy** - the Edge Function keeps API keys server-side
 - **Cron protection** - `CRON_SECRET` required for theme generation
 - **Supabase RLS** - users only access their own data
 - **No client-side secrets** - all sensitive keys server-only
-
-## Testing the Cron Locally
-
-```bash
-# Generate theme for Chinese
-curl -X POST http://localhost:8443/api/themes/generate \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $CRON_SECRET" \
-  -d '{"language": "zh", "difficulty": "Beginner"}'
-
-# Trigger cron job
-curl http://localhost:8443/api/cron/generate-themes \
-  -H "Authorization: Bearer $CRON_SECRET"
-```
 
 ## Scripts
 
