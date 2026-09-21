@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { 
   RotateCcw, Mic, MicOff, Send, Loader2, MessageSquare, FileText, 
-  AlertTriangle, Volume2, VolumeX, Play, Pause, Settings2 
+  AlertTriangle, Play, Pause, Settings2
 } from "lucide-react"
 import { Orb, type OrbState } from "@/components/Orb"
 import { ActionButtons } from "@/components/ActionButtons"
@@ -29,8 +29,7 @@ import { callEdge } from "@/lib/supabase/edge"
 const T_IDLE_RETURN = 6800
 
 // ─── Status text per orb state ───────────────────────────────────────────────
-const statusText: Record<OrbState, string> = {
-  idle: "Ready when you are",
+const statusText: Partial<Record<OrbState, string>> = {
   listening: "Listening...",
   thinking: "Thinking...",
   speaking: "Speaking...",
@@ -180,33 +179,6 @@ function TextInputFallback({
         Text fallback — tap mic for voice
       </p>
     </form>
-  )
-}
-
-// ─── Auto-play Toggle ─────────────────────────────────────────────────────────
-function AutoPlayToggle({ 
-  enabled, 
-  onToggle 
-}: { 
-  enabled: boolean
-  onToggle: () => void
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      className="flex items-center gap-1.5 px-3 py-2 min-h-[36px] rounded-xl transition-all"
-      style={{
-        background: enabled 
-          ? "linear-gradient(135deg, rgba(249,115,22,0.12) 0%, rgba(192,38,211,0.12) 100%)"
-          : "#F5F5F4",
-        border: enabled ? "1px solid rgba(249,115,22,0.2)" : "1px solid #F0EDE8",
-      }}
-    >
-      <Volume2 size={14} strokeWidth={2} className="text-[#F97316]" />
-      <span className="text-[13px] font-medium" style={{ color: enabled ? "#F97316" : "#A8A29E" }}>
-        {enabled ? "Auto-play ON" : "Auto-play OFF"}
-      </span>
-    </button>
   )
 }
 
@@ -699,16 +671,18 @@ enabled: true,
 
           {/* Orb status text */}
           <AnimatePresence mode="wait">
-            <motion.p
-              key={orbState}
-              className="text-[13px] sm:text-sm font-medium text-[#A8A29E] leading-none"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.22 }}
-            >
-              {statusText[orbState]}
-            </motion.p>
+            {orbState !== "idle" && (
+              <motion.p
+                key={orbState}
+                className="text-[13px] sm:text-sm font-medium text-[#A8A29E] leading-none"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.22 }}
+              >
+                {statusText[orbState]}
+              </motion.p>
+            )}
           </AnimatePresence>
         </div>
 
@@ -791,14 +765,8 @@ enabled: true,
           )}
         </AnimatePresence>
 
-        {/* Action buttons with TTS toggle */}
+        {/* Conversation actions */}
         <div className="mt-1 sm:mt-1.5 w-full shrink-0">
-          <div className="flex items-center justify-center mb-0.5">
-            <AutoPlayToggle 
-              enabled={autoPlayTTS} 
-              onToggle={() => setAutoPlayTTS(!autoPlayTTS)} 
-            />
-          </div>
           <ActionButtons
             isMicOn={isListening || speechState === "connecting" || speechState === "requesting-permission"}
             onMicToggle={handleMicToggle}
